@@ -1,85 +1,92 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import {
   View, Text, StyleSheet, ScrollView,
-  TouchableOpacity, StatusBar, ActivityIndicator
+  TouchableOpacity, StatusBar, ActivityIndicator,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import BottomNav from '../components/BottomNav';
+import { useUser } from '../context/UserContext';
+import { PHASE_INFO, getCycleDay, getPhase, callAI } from '../utils/cycle';
 
-const PHASE_INFO = {
-  menstrual:  { label: 'menstrual phase',  desc: 'rest & restore',     color: '#D85A30', bg: '#FAECE7', day: [1,5] },
-  follicular: { label: 'follicular phase', desc: 'energy rising',      color: '#185FA5', bg: '#E6F1FB', day: [6,13] },
-  ovulation:  { label: 'ovulation phase',  desc: 'peak energy',        color: '#0F6E56', bg: '#E1F5EE', day: [14,16] },
-  luteal:     { label: 'luteal phase',     desc: 'slow down & nourish', color: '#533AB7', bg: '#EEEDFE', day: [17,28] },
+const FALLBACK_MEAL = {
+  emoji: '🍲',
+  tag: 'Brazilian · luteal support',
+  name: 'Caldo de Feijão with Brown Rice',
+  description: 'Rich in magnesium & B6 to ease PMS symptoms. A warm, grounding bowl that supports progesterone balance.',
 };
 
-const DEMO_DATA = {
-  meal: {
-    emoji: '🍲',
-    tag: 'Brazilian · luteal support',
-    name: 'Caldo de Feijão with Brown Rice',
-    description: 'Rich in magnesium & B6 to ease PMS symptoms. A warm, grounding bowl that supports progesterone balance.',
-  },
-  workout: {
-    emoji: '🧘',
-    name: 'Yin Yoga Flow',
-    duration: '35 min',
-    intensity: 'low intensity',
-  },
+const FALLBACK_WORKOUT = {
+  emoji: '🧘',
+  name: 'Yin Yoga Flow',
+  duration: '35 min',
+  intensity: 'low intensity',
 };
 
-function getCycleDay(lastPeriodISO) {
-  const last = new Date(lastPeriodISO);
-  const today = new Date();
-  const days = Math.floor((today - last) / 86400000);
-  return (days % 28) + 1;
+async function fetchRecommendations(phase, cuisines) {
+  const text = await callAI(
+    `You are a nutrition and wellness expert specializing in cycle-syncing for women.
+The user is in their ${phase} phase. Their favorite cuisines: ${cuisines.join(', ')}.
+Respond ONLY with a valid JSON object, no markdown:
+{
+  "meal": {
+    "emoji": "one food emoji",
+    "tag": "Cuisine · ${phase} support",
+    "name": "meal name",
+    "description": "one sentence on why this supports the ${phase} phase hormonally"
+  },
+  "workout": {
+    "emoji": "one workout emoji",
+    "name": "workout name",
+    "duration": "X min",
+    "intensity": "low intensity OR medium intensity OR high intensity"
+  }
+}`
+  );
+  return JSON.parse(text);
 }
 
-function getPhase(day) {
-  if (day <= 5)  return 'menstrual';
-  if (day <= 13) return 'follicular';
-  if (day <= 16) return 'ovulation';
-  return 'luteal';
-}
+export default function HomeScreen({ navigation }) {
+  const { profile } = useUser();
+  const { name, cuisines, lastPeriod } = profile;
 
-export default function HomeScreen({ route }) {
-  const { cuisines = ['Brazilian', 'Mexican'], lastPeriod } = route?.params || {};
-  const cycleDay = getCycleDay(lastPeriod || new Date(Date.now() - 18 * 86400000).toISOString());
+  const cycleDay = getCycleDay(lastPeriod);
   const phase = getPhase(cycleDay);
   const phaseInfo = PHASE_INFO[phase];
 
-  const [meal, setMeal] = useState(DEMO_DATA.meal);
-  const [workout] = useState(DEMO_DATA.workout);
-  const [loading, setLoading] = useState(false);
-  const [activeTab, setActiveTab] = useState('home');
+  const [meal, setMeal] = useState(FALLBACK_MEAL);
+  const [workout, setWorkout] = useState(FALLBACK_WORKOUT);
+  const [loading, setLoading] = useState(true);
+  const [regenerating, setRegenerating] = useState(false);
+
+  // Re-fetch whenever the phase or cuisine selection changes
+  useEffect(() => {
+    let cancelled = false;
+    setLoading(true);
+    fetchRecommendations(phase, cuisines)
+      .then(result => {
+        if (!cancelled) {
+          setMeal(result.meal);
+          setWorkout(result.workout);
+        }
+      })
+      .catch(e => console.log('API error, using fallback:', e))
+      .finally(() => { if (!cancelled) setLoading(false); });
+    return () => { cancelled = true; };
+  }, [phase, cuisines.join(',')]);
 
   const regenerateMeal = async () => {
-    setLoading(true);
-    // Simulated regeneration for demo — swap to real API call for hackathon
-    await new Promise(r => setTimeout(r, 1200));
-    const alternatives = [
-      {
-        emoji: '🌮',
-        tag: 'Mexican · luteal support',
-        name: 'Black Bean & Sweet Potato Tacos',
-        description: 'High in iron and complex carbs to stabilize mood. The sweet potato supports serotonin production.',
-      },
-      {
-        emoji: '🍜',
-        tag: 'Japanese · luteal support',
-        name: 'Miso Soup with Tofu & Wakame',
-        description: 'Phytoestrogens in tofu gently support hormone balance. Light, warming, and deeply nourishing.',
-      },
-      {
-        emoji: '🫘',
-        tag: 'Colombian · luteal support',
-        name: 'Bandeja Paisa Light Bowl',
-        description: 'Protein-rich beans and plantains stabilize blood sugar to reduce cravings and fatigue.',
-      },
-    ];
-    const next = alternatives[Math.floor(Math.random() * alternatives.length)];
-    setMeal(next);
-    setLoading(false);
+    setRegenerating(true);
+    try {
+      const result = await fetchRecommendations(phase, cuisines);
+      setMeal(result.meal);
+    } catch (e) {
+      console.log('Regenerate error:', e);
+    } finally {
+      setRegenerating(false);
+    }
   };
+
+  const firstName = name ? name.trim().split(' ')[0] : null;
 
   return (
     <SafeAreaView style={styles.safe}>
@@ -88,7 +95,9 @@ export default function HomeScreen({ route }) {
 
         {/* Header */}
         <View style={[styles.header, { backgroundColor: phaseInfo.bg }]}>
-          <Text style={styles.greeting}>good morning ✦</Text>
+          <Text style={styles.greeting}>
+            {firstName ? `good morning, ${firstName} ✦` : 'good morning ✦'}
+          </Text>
           <Text style={styles.headerTitle}>day {cycleDay} of your cycle</Text>
           <View style={[styles.phaseBadge, { borderColor: phaseInfo.color + '44' }]}>
             <View style={[styles.phaseDot, { backgroundColor: phaseInfo.color }]} />
@@ -131,72 +140,68 @@ export default function HomeScreen({ route }) {
 
         {/* Meal Card */}
         <Text style={styles.sectionTitle}>today's meal</Text>
-        <View style={styles.mealCard}>
-          <View style={styles.mealCardImage}>
-            <Text style={styles.mealEmoji}>{meal.emoji}</Text>
+        {loading ? (
+          <View style={styles.loadingCard}>
+            <ActivityIndicator size="large" color="#7F77DD" />
+            <Text style={styles.loadingText}>lua is personalizing your meal...</Text>
           </View>
-          <View style={styles.mealCardBody}>
-            <View style={styles.mealTagWrap}>
-              <Text style={styles.mealTag}>{meal.tag}</Text>
+        ) : (
+          <View style={styles.mealCard}>
+            <View style={styles.mealCardImage}>
+              <Text style={styles.mealEmoji}>{meal.emoji}</Text>
             </View>
-            <Text style={styles.mealName}>{meal.name}</Text>
-            <Text style={styles.mealDesc}>{meal.description}</Text>
-            <View style={styles.mealActions}>
-              <TouchableOpacity style={styles.mealBtnPrimary} activeOpacity={0.85}>
-                <Text style={styles.mealBtnPrimaryText}>see recipe</Text>
-              </TouchableOpacity>
-              <TouchableOpacity
-                style={styles.mealBtnGhost}
-                onPress={regenerateMeal}
-                activeOpacity={0.75}
-                disabled={loading}
-              >
-                {loading
-                  ? <ActivityIndicator size="small" color="#3C3489" />
-                  : <Text style={styles.mealBtnGhostText}>regenerate ↺</Text>
-                }
-              </TouchableOpacity>
+            <View style={styles.mealCardBody}>
+              <View style={styles.mealTagWrap}>
+                <Text style={styles.mealTag}>{meal.tag}</Text>
+              </View>
+              <Text style={styles.mealName}>{meal.name}</Text>
+              <Text style={styles.mealDesc}>{meal.description}</Text>
+              <View style={styles.mealActions}>
+                <TouchableOpacity
+                  style={styles.mealBtnPrimary}
+                  activeOpacity={0.85}
+                  onPress={() => navigation.navigate('RecipeDetail', { meal, phase, cuisines })}
+                >
+                  <Text style={styles.mealBtnPrimaryText}>see recipe</Text>
+                </TouchableOpacity>
+                <TouchableOpacity
+                  style={styles.mealBtnGhost}
+                  onPress={regenerateMeal}
+                  activeOpacity={0.75}
+                  disabled={regenerating}
+                >
+                  {regenerating
+                    ? <ActivityIndicator size="small" color="#3C3489" />
+                    : <Text style={styles.mealBtnGhostText}>regenerate ↺</Text>}
+                </TouchableOpacity>
+              </View>
             </View>
           </View>
-        </View>
+        )}
 
         {/* Workout Card */}
         <Text style={styles.sectionTitle}>today's workout</Text>
-        <View style={styles.workoutCard}>
-          <Text style={styles.workoutEmoji}>{workout.emoji}</Text>
-          <View style={styles.workoutInfo}>
-            <Text style={styles.workoutName}>{workout.name}</Text>
-            <Text style={styles.workoutMeta}>{workout.duration} · {workout.intensity}</Text>
+        {loading ? (
+          <View style={styles.loadingCardSmall}>
+            <ActivityIndicator size="small" color="#7F77DD" />
           </View>
-          <View style={styles.workoutBadge}>
-            <Text style={styles.workoutBadgeText}>{phase}</Text>
+        ) : (
+          <View style={styles.workoutCard}>
+            <Text style={styles.workoutEmoji}>{workout.emoji}</Text>
+            <View style={styles.workoutInfo}>
+              <Text style={styles.workoutName}>{workout.name}</Text>
+              <Text style={styles.workoutMeta}>{workout.duration} · {workout.intensity}</Text>
+            </View>
+            <View style={styles.workoutBadge}>
+              <Text style={styles.workoutBadgeText}>{phase}</Text>
+            </View>
           </View>
-        </View>
+        )}
 
         <View style={{ height: 100 }} />
       </ScrollView>
 
-      {/* Bottom Nav */}
-      <View style={styles.navBar}>
-        {[
-          { key: 'home',     emoji: '🌙', label: 'home' },
-          { key: 'meals',    emoji: '🍽',  label: 'meals' },
-          { key: 'workouts', emoji: '💪',  label: 'workouts' },
-          { key: 'cycle',    emoji: '📊',  label: 'cycle' },
-        ].map(tab => (
-          <TouchableOpacity
-            key={tab.key}
-            style={styles.navItem}
-            onPress={() => setActiveTab(tab.key)}
-            activeOpacity={0.7}
-          >
-            <Text style={styles.navIcon}>{tab.emoji}</Text>
-            <Text style={[styles.navLabel, activeTab === tab.key && styles.navLabelActive]}>
-              {tab.label}
-            </Text>
-          </TouchableOpacity>
-        ))}
-      </View>
+      <BottomNav activeTab="Home" navigation={navigation} />
     </SafeAreaView>
   );
 }
@@ -237,10 +242,19 @@ const styles = StyleSheet.create({
     textTransform: 'uppercase', color: '#aaa',
     paddingHorizontal: 24, paddingTop: 16, paddingBottom: 10,
   },
+  loadingCard: {
+    marginHorizontal: 16, borderRadius: 20, padding: 40,
+    alignItems: 'center', gap: 12,
+    backgroundColor: '#F5F5F3', borderWidth: 0.5, borderColor: '#eee',
+  },
+  loadingText: { fontSize: 13, color: '#aaa', textAlign: 'center' },
+  loadingCardSmall: {
+    marginHorizontal: 16, borderRadius: 20, padding: 24,
+    alignItems: 'center', backgroundColor: '#F5F5F3',
+  },
   mealCard: {
     marginHorizontal: 16, borderRadius: 20, overflow: 'hidden',
-    borderWidth: 0.5, borderColor: '#eee', marginBottom: 8,
-    backgroundColor: '#fff',
+    borderWidth: 0.5, borderColor: '#eee', marginBottom: 8, backgroundColor: '#fff',
   },
   mealCardImage: {
     height: 140, backgroundColor: '#C0DD97',
@@ -282,14 +296,4 @@ const styles = StyleSheet.create({
     paddingVertical: 6, paddingHorizontal: 12,
   },
   workoutBadgeText: { color: '#3C3489', fontSize: 12, fontWeight: '500' },
-  navBar: {
-    flexDirection: 'row', justifyContent: 'space-around',
-    paddingVertical: 12, paddingBottom: 28,
-    borderTopWidth: 0.5, borderTopColor: '#eee',
-    backgroundColor: '#fff', position: 'absolute', bottom: 0, left: 0, right: 0,
-  },
-  navItem: { alignItems: 'center', gap: 4 },
-  navIcon: { fontSize: 22 },
-  navLabel: { fontSize: 10, color: '#bbb' },
-  navLabelActive: { color: '#3C3489', fontWeight: '500' },
 });

@@ -4,6 +4,7 @@ import {
   ScrollView, StatusBar
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import { useUser } from '../context/UserContext';
 
 const CUISINES = [
   'Brazilian', 'Mexican', 'Japanese', 'Indian',
@@ -13,6 +14,7 @@ const CUISINES = [
 ];
 
 export default function SetupScreen({ navigation }) {
+  const { updateProfile } = useUser();
   const [step, setStep] = useState(1);
   const [selectedCuisines, setSelectedCuisines] = useState(new Set(['Brazilian', 'Mexican']));
 
@@ -28,10 +30,11 @@ export default function SetupScreen({ navigation }) {
     if (step === 1) {
       setStep(2);
     } else {
-      navigation.navigate('Home', {
+      updateProfile({
         cuisines: Array.from(selectedCuisines),
         lastPeriod: new Date(Date.now() - 18 * 86400000).toISOString(),
       });
+      navigation.navigate('Home');
     }
   };
 
